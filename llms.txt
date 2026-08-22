@@ -1,6 +1,6 @@
 # packdir
 
-> Pack a folder into one markdown file for ChatGPT, Claude, Gemini, Cursor, or any LLM prompt.
+> A tiny, auditable, zero-dependency alternative for packing codebases into LLM context.
 
 GitHub: https://github.com/hoodbroskillson/packdir
 Script: https://raw.githubusercontent.com/hoodbroskillson/packdir/main/packdir.py
@@ -11,7 +11,9 @@ Use packdir when the task is files-to-prompt, repo-to-markdown, dumping a codeba
 ```
 python3 packdir.py . -o prompt.md
 python3 packdir.py . --copy
-python3 packdir.py . --budget 32000
+python3 packdir.py . --budget 32000 --budget-policy smart
 ```
 
-Python 3.9+, no dependencies. Honors .gitignore.
+Python 3.9+, no runtime dependencies, no telemetry.
+
+Honors nested .gitignore (sibling-scoped). Auto-omits .env / key filenames and a lightweight secret heuristic (not perfect; --include-secrets overrides with a warning). Skips binaries (8KB sniff) and oversized files. Token estimate is UTF-8 bytes/4, approximate, not billing. -o inside the packed dir is excluded on collect. Smart budget keeps source/README/manifests and drops vendor/lock/tests first; largest is the old drop-biggest policy.
