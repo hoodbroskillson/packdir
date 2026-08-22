@@ -13,6 +13,34 @@ python3 packdir.py ./my-app -o prompt.md
 
 No dependencies. Python 3.9+.
 
+## Example
+
+Run it on this repo:
+
+```bash
+python3 packdir.py . -o prompt.md
+```
+
+`prompt.md` starts with a tree, then each text file:
+
+    # packdir
+
+    ## Tree
+
+        packdir/
+          LICENSE
+          README.md
+          packdir.py
+
+    ## Files
+
+    ### packdir.py
+
+        #!/usr/bin/env python3
+        ...
+
+Paste that file into any chat model.
+
 ## Why this exists
 
 You already do this by hand: copy a few files, forget one, paste a wall of text. `packdir` makes that one command.
