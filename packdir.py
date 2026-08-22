@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -59,6 +61,7 @@ BINARY_SUFFIXES = {
 }
 
 MAX_FILE_BYTES = 200_000
+DEFAULT_MAX_TOKENS = 128_000
 
 
 def should_skip_dir(name: str) -> bool:
@@ -136,12 +139,47 @@ def pack(root: Path) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+def estimate_tokens(text: str) -> int:
+    # ~4 chars per token. Close enough to decide "will this fit?"
+    return max(1, (len(text) + 3) // 4)
+
+
+def copy_to_clipboard(text: str) -> None:
+    if sys.platform == "win32" and shutil.which("clip"):
+        subprocess.run(["clip"], input=text.encode("utf-8"), check=True)
+        return
+    if sys.platform == "darwin" and shutil.which("pbcopy"):
+        subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+        return
+    for cmd in (
+        ["wl-copy"],
+        ["xclip", "-selection", "clipboard"],
+        ["xsel", "--clipboard", "--input"],
+    ):
+        if shutil.which(cmd[0]):
+            subprocess.run(cmd, input=text.encode("utf-8"), check=True)
+            return
+    raise RuntimeError("no clipboard command found (clip, pbcopy, wl-copy, xclip, or xsel)")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Pack a folder into one markdown file for LLM prompts."
     )
     parser.add_argument("path", nargs="?", default=".", help="Folder to pack")
     parser.add_argument("-o", "--output", help="Write to this file instead of stdout")
+    parser.add_argument(
+        "-c",
+        "--copy",
+        action="store_true",
+        help="Copy the packed prompt to the clipboard",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_MAX_TOKENS,
+        help="Warn if the estimate is over this (default: 128000)",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.path).expanduser().resolve()
@@ -150,11 +188,31 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     markdown = pack(root)
+    tokens = estimate_tokens(markdown)
+    print(
+        f"{len(markdown)} bytes, ~{tokens:,} tokens (chars/4)",
+        file=sys.stderr,
+    )
+    if tokens > args.max_tokens:
+        print(
+            f"warning: ~{tokens:,} tokens is over --max-tokens {args.max_tokens:,}. "
+            "This will likely blow the context window.",
+            file=sys.stderr,
+        )
+
+    if args.copy:
+        try:
+            copy_to_clipboard(markdown)
+        except (RuntimeError, subprocess.CalledProcessError) as err:
+            print(f"packdir: clipboard failed: {err}", file=sys.stderr)
+            return 1
+        print("copied to clipboard", file=sys.stderr)
+
     if args.output:
         out = Path(args.output).expanduser()
         out.write_text(markdown, encoding="utf-8")
-        print(f"wrote {out} ({len(markdown)} bytes)", file=sys.stderr)
-    else:
+        print(f"wrote {out}", file=sys.stderr)
+    elif not args.copy:
         sys.stdout.write(markdown)
     return 0
 
