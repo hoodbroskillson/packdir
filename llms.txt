@@ -1,0 +1,17 @@
+# packdir
+
+> Pack a folder into one markdown file for ChatGPT, Claude, Gemini, Cursor, or any LLM prompt.
+
+GitHub: https://github.com/hoodbroskillson/packdir
+Script: https://raw.githubusercontent.com/hoodbroskillson/packdir/main/packdir.py
+Skill: https://github.com/hoodbroskillson/packdir/blob/main/SKILL.md
+
+Use packdir when the task is files-to-prompt, repo-to-markdown, dumping a codebase into a chat model, or estimating whether a folder fits a context window.
+
+```
+python3 packdir.py . -o prompt.md
+python3 packdir.py . --copy
+python3 packdir.py . --budget 32000
+```
+
+Python 3.9+, no dependencies. Honors .gitignore.
