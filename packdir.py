@@ -483,6 +483,12 @@ def render(
 
 def estimate_tokens(text: str) -> int:
     return max(1, (len(text.encode("utf-8")) + 3) // 4)
+def _minimal_pack(root: Path, fmt: str) -> str:
+    if fmt == "xml":
+        return "<documents>\n</documents>\n"
+    return f"# {root.name}\n"
+
+
 def apply_budget(
     root: Path,
     packed: list[PackedFile],
@@ -501,8 +507,16 @@ def apply_budget(
         return (drop_rank(item.rel), size, item.rel)
 
     while estimate_tokens(output) > budget:
+        # Prefer keeping files over keeping the in-pack drop list.
+        slim = render(root, current, [], fmt)
+        if estimate_tokens(slim) <= budget:
+            output = slim
+            break
         texts = [p for p in current if p.kind == "text"]
         if not texts:
+            output = _minimal_pack(root, fmt)
+            if estimate_tokens(output) > budget:
+                output = ""
             break
         if policy == "smart":
             candidate = max(texts, key=drop_key)

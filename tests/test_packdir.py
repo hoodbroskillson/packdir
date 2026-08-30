@@ -357,6 +357,20 @@ class CleanPackTests(unittest.TestCase):
             self.assertNotIn("### .env", stdout)
             self.assertIn("binaries skipped", stderr)
 
+    def test_tight_budget_stays_at_or_under_limit(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            _write(tmp / "app.py", "print('ok')\n")
+            (tmp / "photo.png").write_bytes(b"\x89PNG\x00" + b"x" * 200)
+            _write(tmp / ".env", "SECRET=nope\n")
+            code, stdout, stderr = _run_main([str(tmp), "--budget", "20"])
+            self.assertEqual(code, 0)
+            self.assertLessEqual(pd.estimate_tokens(stdout), 20)
+            self.assertNotIn("_binary skipped_", stdout)
+            self.assertNotIn("### photo.png", stdout)
+            self.assertNotIn("### .env", stdout)
+            self.assertIn("dropped to fit budget", stderr)
+
 
 class ListTests(unittest.TestCase):
     def test_list_prints_paths_not_markdown_pack(self):
