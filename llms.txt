@@ -11,9 +11,12 @@ Use packdir when the task is files-to-prompt, repo-to-markdown, dumping a codeba
 ```
 python3 packdir.py . -o prompt.md
 python3 packdir.py . --copy
+python3 packdir.py . --list
 python3 packdir.py . --budget 32000 --budget-policy smart
+python3 packdir.py . --format xml -o prompt.xml
+python3 packdir.py --version
 ```
 
 Python 3.9+, no runtime dependencies, no telemetry.
 
-Honors nested .gitignore (sibling-scoped). Auto-omits .env / key filenames and a lightweight secret heuristic (not perfect; --include-secrets overrides with a warning). Skips binaries (8KB sniff) and oversized files. Token estimate is UTF-8 bytes/4, approximate, not billing. -o inside the packed dir is excluded on collect. Smart budget keeps source/README/manifests and drops vendor/lock/tests first; largest is the old drop-biggest policy.
+Honors nested .gitignore (sibling-scoped). Auto-omits .env / key filenames and a lightweight secret heuristic (not perfect; --include-secrets overrides with a warning). Skips binaries (8KB sniff) and oversized files; skip/omit notes stay on stderr, not in the pack. Token estimate is UTF-8 bytes/4, approximate, not billing. -o inside the packed dir is excluded on collect. Smart budget keeps source/README/manifests and drops vendor/lock/tests first; largest is the old drop-biggest policy. --budget output is <= the budget. --list is a dry-run. --format markdown|xml.

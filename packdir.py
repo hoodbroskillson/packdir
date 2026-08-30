@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack a folder into one markdown file for LLM prompts.
+"""Pack a folder into one file for LLM prompts.
 
 A tiny, auditable, zero-dependency alternative for packing codebases
 into LLM context. Python 3.9+, no runtime dependencies.
@@ -16,6 +16,9 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from xml.sax.saxutils import escape, quoteattr
+
+VERSION = "1.1.0"
 ALWAYS_SKIP_DIRS = {".git", ".hg", ".svn"}
 
 DEFAULT_SKIP_DIRS = {
@@ -420,7 +423,12 @@ def drop_reason(rel: str, policy: str) -> str:
     return "kept-class"
 
 
-def render(root: Path, packed: list[PackedFile], dropped: list[str]) -> str:
+def _text_files(packed: list[PackedFile]) -> list[PackedFile]:
+    return [p for p in packed if p.kind == "text"]
+
+
+def render_markdown(root: Path, packed: list[PackedFile], dropped: list[str]) -> str:
+    packed = _text_files(packed)
     rels = [p.rel for p in packed]
     parts = [
         f"# {root.name}",
@@ -442,6 +450,37 @@ def render(root: Path, packed: list[PackedFile], dropped: list[str]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+def _xml_comment(text: str) -> str:
+    return text.replace("--", "- -")
+
+
+def render_xml(root: Path, packed: list[PackedFile], dropped: list[str]) -> str:
+    packed = _text_files(packed)
+    rels = [p.rel for p in packed]
+    tree = _xml_comment("\n".join(tree_lines(root, rels)))
+    parts = ["<documents>", f"<!--\n{tree}\n-->"]
+    if dropped:
+        drop_block = _xml_comment("\n".join(dropped))
+        parts.append(f"<!-- dropped to fit budget\n{drop_block}\n-->")
+    for item in packed:
+        parts.append(
+            f"<document path={quoteattr(item.rel)}>\n{escape(item.raw)}\n</document>"
+        )
+    parts.append("</documents>")
+    return "\n".join(parts) + "\n"
+
+
+def render(
+    root: Path,
+    packed: list[PackedFile],
+    dropped: list[str],
+    fmt: str = "markdown",
+) -> str:
+    if fmt == "xml":
+        return render_xml(root, packed, dropped)
+    return render_markdown(root, packed, dropped)
+
+
 def estimate_tokens(text: str) -> int:
     return max(1, (len(text.encode("utf-8")) + 3) // 4)
 def apply_budget(
@@ -449,10 +488,11 @@ def apply_budget(
     packed: list[PackedFile],
     budget: int,
     policy: str,
+    fmt: str = "markdown",
 ) -> tuple[list[PackedFile], list[str], str]:
     dropped: list[str] = []
-    current = list(packed)
-    markdown = render(root, current, dropped)
+    current = _text_files(packed)
+    output = render(root, current, dropped, fmt)
 
     def drop_key(item: PackedFile) -> tuple:
         size = len(item.body.encode("utf-8"))
@@ -460,7 +500,7 @@ def apply_budget(
             return (size, item.rel)
         return (drop_rank(item.rel), size, item.rel)
 
-    while estimate_tokens(markdown) > budget:
+    while estimate_tokens(output) > budget:
         texts = [p for p in current if p.kind == "text"]
         if not texts:
             break
@@ -472,8 +512,8 @@ def apply_budget(
         tokens = estimate_tokens(candidate.body)
         why = drop_reason(candidate.rel, policy)
         dropped.append(f"{candidate.rel} (~{tokens:,} tokens, {why})")
-        markdown = render(root, current, dropped)
-    return current, dropped, markdown
+        output = render(root, current, dropped, fmt)
+    return current, dropped, output
 def copy_to_clipboard(text: str) -> None:
     if sys.platform == "win32" and shutil.which("clip"):
         subprocess.run(["clip"], input=text.encode("utf-8"), check=True)
@@ -512,14 +552,30 @@ def summarize(packed: list[PackedFile]) -> Counts:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Pack a folder into one markdown file for LLM prompts. "
+            "Pack a folder into one file for LLM prompts. "
             "Tiny, auditable, zero-dependency."
         )
     )
     parser.add_argument("path", nargs="?", default=".", help="Folder to pack")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"packdir {VERSION}",
+    )
     parser.add_argument("-o", "--output", help="Write to this file instead of stdout")
     parser.add_argument(
         "-c", "--copy", action="store_true", help="Copy the packed prompt to the clipboard"
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="Print files that would be packed (path + approx tokens), without writing the pack",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("markdown", "xml"),
+        default="markdown",
+        help="Output format (default: markdown)",
     )
     parser.add_argument(
         "--max-tokens",
@@ -611,17 +667,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"warning: included suspicious file (heuristic): {item.rel}", file=sys.stderr)
 
     dropped: list[str] = []
-    visible = [p for p in packed if p.kind == "text"]
-    notes = [p for p in packed if p.kind != "text"]
+    visible = _text_files(packed)
+    fmt = args.format
     if args.budget is not None:
-        visible, dropped, _md = apply_budget(root, visible, args.budget, policy)
-        markdown = render(root, visible + notes, dropped)
+        visible, dropped, output = apply_budget(root, visible, args.budget, policy, fmt)
     else:
-        markdown = render(root, visible + notes, dropped)
+        output = render(root, visible, dropped, fmt)
 
     counts.dropped = len(dropped)
-    token_bytes = len(markdown.encode("utf-8"))
-    tokens = estimate_tokens(markdown)
+    token_bytes = len(output.encode("utf-8"))
+    tokens = estimate_tokens(output)
     print(
         f"{counts.considered} considered, {len(visible)} text packed, "
         f"{counts.binary} binaries skipped, {counts.oversized} oversized skipped, "
@@ -642,9 +697,18 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
+    if args.list:
+        for item in visible:
+            print(f"{item.rel}\t~{estimate_tokens(item.raw)}")
+        if dropped:
+            print("dropped to fit budget:")
+            for name in dropped:
+                print(f"  {name}")
+        return 0
+
     if args.copy:
         try:
-            copy_to_clipboard(markdown)
+            copy_to_clipboard(output)
         except (RuntimeError, subprocess.CalledProcessError) as err:
             print(f"packdir: clipboard failed: {err}", file=sys.stderr)
             return 1
@@ -652,10 +716,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if out_path is not None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(markdown, encoding="utf-8")
+        out_path.write_text(output, encoding="utf-8")
         print(f"wrote {out_path}", file=sys.stderr)
     elif not args.copy:
-        sys.stdout.write(markdown)
+        sys.stdout.write(output)
     return 0
 
 

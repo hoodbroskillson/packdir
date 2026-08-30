@@ -36,12 +36,19 @@ No runtime dependencies. Python 3.9+.
 python3 packdir.py .
 python3 packdir.py ./my-app -o prompt.md
 python3 packdir.py ./my-app --copy
+python3 packdir.py ./my-app --list
 python3 packdir.py ./my-app --include '*.py' --exclude '*_test.py'
 python3 packdir.py ./my-app --budget 32000 -o prompt.md
 python3 packdir.py ./my-app --budget 32000 --budget-policy largest
+python3 packdir.py ./my-app --format xml -o prompt.xml
+python3 packdir.py --version
 ```
 
 `--copy` uses `clip` on Windows, `pbcopy` on macOS, or `wl-copy` / `xclip` on Linux.
+
+`--list` prints the files that would be packed (path + approximate tokens) and does not write the pack. Summary stays on stderr. With `--budget`, the list is the post-budget set plus the drops.
+
+`--format xml` writes a `<documents>` pack with one `<document path="...">` per file. Tree is an XML comment. Default is markdown (headings + fences).
 
 The token figure is `utf-8 bytes / 4`. Approximate fit-check, not a billing meter.
 
@@ -54,7 +61,7 @@ By default packdir:
 - Honors **nested** `.gitignore` (a rule in `a/.gitignore` does not apply to sibling `b/`)
 - Auto-omits `.env`, `.env.*` (except `.env.example` / `.env.sample` / `.env.template`), private key filenames (`id_rsa`, `*.pem`, …), and common credential filenames
 - Runs a **lightweight, imperfect** scan for private-key headers and typical API-key/token shapes, then omits those files and warns on stderr
-- Skips binaries (8KB sniff, after a size check) and files over 200KB
+- Skips binaries (8KB sniff, after a size check) and files over 200KB. Skip/omit notes go to stderr and the summary line, not into the pack.
 
 `.gitignore` is not a security boundary. Do not treat an ignored tree as “safe to paste.” Review the markdown before you send it.
 
@@ -64,7 +71,7 @@ Writing `-o` to a path inside the packed directory excludes that exact file so `
 
 ## Budget policies
 
-`--budget N` drops files until the estimate is at most N tokens.
+`--budget N` drops files until the written pack is at most N tokens. The pack contains only text files; skipped binaries/secrets/oversized files are not re-attached after the budget pass.
 
 | Policy | Flag | Behavior |
 | --- | --- | --- |
@@ -95,7 +102,8 @@ wrote prompt.md
 - Markdown fences sized to the longest backtick run in each file
 - UTF-8 byte counts (not Latin-1 character counts)
 - Secret filename + heuristic content filter (opt-in override)
-- Smart vs largest context budget
+- Smart vs largest context budget; `--budget` output stays within the budget
+- `--list` dry-run; `--format markdown|xml`; `--version`
 
 ## Limitations
 
