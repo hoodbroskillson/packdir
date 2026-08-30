@@ -1,4 +1,4 @@
-"""Tests for packdir v1. Stdlib unittest only. No network."""
+"""Tests for packdir. Stdlib unittest only. No network."""
 
 from __future__ import annotations
 
@@ -302,6 +302,156 @@ class BudgetTests(unittest.TestCase):
             k2, d2, _ = pd.apply_budget(tmp, files, budget=80, policy="largest")
             self.assertEqual(d1, d2)
             self.assertEqual([x.rel for x in k1], [x.rel for x in k2])
+
+
+def _run_main(argv):
+    out = io.StringIO()
+    err = io.StringIO()
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out, err
+    try:
+        code = pd.main(argv)
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+    return code, out.getvalue(), err.getvalue()
+
+
+class CleanPackTests(unittest.TestCase):
+    def test_skipped_files_absent_from_pack_body(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            _write(tmp / "app.py", "print(1)\n")
+            _write(tmp / ".env", "SECRET=1\n")
+            (tmp / "blob.bin").write_bytes(b"hello\x00world")
+            big = tmp / "huge.txt"
+            big.write_bytes(b"x" * (pd.MAX_FILE_BYTES + 10))
+            code, stdout, stderr = _run_main([str(tmp)])
+            self.assertEqual(code, 0)
+            self.assertIn("### app.py", stdout)
+            self.assertIn("print(1)", stdout)
+            self.assertNotIn("### .env", stdout)
+            self.assertNotIn("_secret filename omitted_", stdout)
+            self.assertNotIn("### blob.bin", stdout)
+            self.assertNotIn("_binary skipped_", stdout)
+            self.assertNotIn("### huge.txt", stdout)
+            self.assertNotIn("_skipped,", stdout)
+            self.assertIn("omitted secret filename: .env", stderr)
+            self.assertIn("binaries skipped", stderr)
+            self.assertIn("oversized skipped", stderr)
+
+    def test_budget_holds_when_binaries_exist(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            _write(tmp / "app.py", "print('ok')\n")
+            (tmp / "photo.png").write_bytes(b"\x89PNG\x00" + b"x" * 200)
+            (tmp / "data.bin").write_bytes(b"abc\x00def")
+            _write(tmp / ".env", "SECRET=nope\n")
+            text_only = pd.read_packed(tmp, tmp / "app.py", include_secrets=False)
+            budget = pd.estimate_tokens(pd.render(tmp, [text_only], []))
+            code, stdout, stderr = _run_main([str(tmp), "--budget", str(budget)])
+            self.assertEqual(code, 0)
+            self.assertLessEqual(pd.estimate_tokens(stdout), budget)
+            self.assertNotIn("_binary skipped_", stdout)
+            self.assertNotIn("### photo.png", stdout)
+            self.assertNotIn("### data.bin", stdout)
+            self.assertNotIn("### .env", stdout)
+            self.assertIn("binaries skipped", stderr)
+
+    def test_tight_budget_stays_at_or_under_limit(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            _write(tmp / "app.py", "print('ok')\n")
+            (tmp / "photo.png").write_bytes(b"\x89PNG\x00" + b"x" * 200)
+            _write(tmp / ".env", "SECRET=nope\n")
+            code, stdout, stderr = _run_main([str(tmp), "--budget", "20"])
+            self.assertEqual(code, 0)
+            self.assertLessEqual(pd.estimate_tokens(stdout), 20)
+            self.assertNotIn("_binary skipped_", stdout)
+            self.assertNotIn("### photo.png", stdout)
+            self.assertNotIn("### .env", stdout)
+            self.assertIn("dropped to fit budget", stderr)
+
+
+class ListTests(unittest.TestCase):
+    def test_list_prints_paths_not_markdown_pack(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            _write(tmp / "src" / "app.py", "print(1)\n")
+            _write(tmp / "README.md", "hello\n")
+            (tmp / "blob.bin").write_bytes(b"\x00\x01")
+            code, stdout, stderr = _run_main([str(tmp), "--list"])
+            self.assertEqual(code, 0)
+            self.assertIn("src/app.py", stdout)
+            self.assertIn("README.md", stdout)
+            self.assertIn("~", stdout)
+            self.assertNotIn("## Tree", stdout)
+            self.assertNotIn("## Files", stdout)
+            self.assertNotIn("### src/app.py", stdout)
+            self.assertNotIn("Packed for an LLM prompt", stdout)
+            self.assertNotIn("blob.bin", stdout)
+            self.assertIn("considered", stderr)
+            self.assertIn("text packed", stderr)
+
+    def test_list_with_budget_shows_drops(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            _write(tmp / "keep.py", "x=1\n")
+            _write(tmp / "vendor" / "big.js", "V" * 4000)
+            code, stdout, stderr = _run_main(
+                [str(tmp), "--list", "--budget", "80", "--budget-policy", "largest"]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("keep.py", stdout)
+            self.assertIn("dropped to fit budget", stdout)
+            self.assertIn("vendor/big.js", stdout)
+            self.assertIn("dropped to fit budget", stderr)
+            self.assertNotIn("## Files", stdout)
+            self.assertNotIn("### keep.py", stdout)
+
+
+class FormatTests(unittest.TestCase):
+    def test_format_xml_includes_paths_and_contents(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            _write(tmp / "src" / "app.py", "print(1)\n")
+            _write(tmp / "README.md", "hello pack\n")
+            (tmp / "blob.bin").write_bytes(b"\x00bin")
+            code, stdout, stderr = _run_main([str(tmp), "--format", "xml"])
+            self.assertEqual(code, 0)
+            self.assertIn("<documents>", stdout)
+            self.assertIn("</documents>", stdout)
+            self.assertIn('path="src/app.py"', stdout)
+            self.assertIn("print(1)", stdout)
+            self.assertIn('path="README.md"', stdout)
+            self.assertIn("hello pack", stdout)
+            self.assertNotIn("blob.bin", stdout)
+            self.assertNotIn("_binary skipped_", stdout)
+            self.assertIn("considered", stderr)
+
+    def test_format_markdown_still_uses_headings(self):
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            _write(tmp / "a.py", "x=1\n")
+            code, stdout, _stderr = _run_main([str(tmp), "--format", "markdown"])
+            self.assertEqual(code, 0)
+            self.assertIn("### a.py", stdout)
+            self.assertIn("```", stdout)
+
+
+class VersionTests(unittest.TestCase):
+    def test_version_prints_version(self):
+        out = io.StringIO()
+        err = io.StringIO()
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = out, err
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                pd.main(["--version"])
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn(pd.VERSION, out.getvalue())
+        self.assertIn("packdir", out.getvalue())
 
 
 if __name__ == "__main__":

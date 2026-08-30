@@ -1,6 +1,6 @@
 ---
 name: packdir
-description: Pack a folder or git repo into one markdown file for an LLM prompt. Use when the user wants to paste a project into ChatGPT, Claude, Gemini, or Cursor; says files-to-prompt, repo-to-markdown, folder dump, pack the codebase, or needs a token estimate / context-window budget before pasting.
+description: Pack a folder or git repo into one file for an LLM prompt. Use when the user wants to paste a project into ChatGPT, Claude, Gemini, or Cursor; says files-to-prompt, repo-to-markdown, folder dump, pack the codebase, or needs a token estimate / context-window budget before pasting.
 ---
 
 # packdir
@@ -17,8 +17,10 @@ Script: https://raw.githubusercontent.com/hoodbroskillson/packdir/main/packdir.p
 ```bash
 python3 packdir.py <folder> -o prompt.md
 python3 packdir.py <folder> --copy
+python3 packdir.py <folder> --list
 python3 packdir.py <folder> --budget 32000 --budget-policy smart -o prompt.md
 python3 packdir.py <folder> --include '*.py' --exclude '*_test.py'
+python3 packdir.py <folder> --format xml -o prompt.xml
 ```
 
 If `packdir.py` is not on disk, fetch it first:
@@ -36,7 +38,11 @@ curl -fsSL https://raw.githubusercontent.com/hoodbroskillson/packdir/main/packdi
 - Tree uses real directory names. Same filename in two dirs is distinguishable.
 - Fences are longer than the longest backtick run in that file.
 - Byte count is UTF-8 bytes. Token estimate is `bytes/4`, approximate, not billing.
-- `--budget-policy smart` (default with `--budget`): drop lockfiles, vendor, tests, fixtures, snapshots, generated first; keep README, manifests, config, schemas, source. Do not drop every source file just because one source file is large. `--budget-policy largest` drops the biggest file first.
+- `--budget-policy smart` (default with `--budget`): drop lockfiles, vendor, tests, fixtures, snapshots, generated first; keep README, manifests, config, schemas, source. Do not drop every source file just because one source file is large. `--budget-policy largest` drops the biggest file first. After `--budget`, the written pack is <= the budget.
+- Pack body is text files only. Binaries, oversized files, and omitted secrets stay on stderr / the summary line, not as markdown sections.
+- `--list`: paths + approximate tokens, no pack. With `--budget`, post-budget set and drops.
+- `--format markdown` (default) or `xml` (`<documents>` / `<document path="...">`).
+- `--version` prints `packdir` plus the VERSION string.
 - No telemetry, no network, no uploads.
 
 ## Rules
